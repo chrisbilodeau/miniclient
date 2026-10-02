@@ -1,0 +1,51 @@
+name: Build & Push Container Images
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/chrisbilodeau/miniclient
+
+jobs:
+  build-push:
+    name: Build & push (amd64 + arm64)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute tags
+        id: meta
+        run: |
+          DATE_TAG="$(date -u +%Y-%m-%d)"
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          echo "version=${DATE_TAG}_${SHORT_SHA}" >> "${GITHUB_OUTPUT}"
+
+      - name: Register QEMU for cross-arch builds
+        run: sudo podman run --rm --privileged docker.io/tonistiigi/binfmt --install all
+
+      - name: Build image (amd64 + arm64)
+        uses: redhat-actions/buildah-build@v3
+        with:
+          context: .
+          containerfiles: Containerfile
+          image: ${{ env.IMAGE_NAME }}
+          tags: latest ${{ steps.meta.outputs.version }}
+          platforms: linux/amd64,linux/arm64
+
+      - name: Push to GHCR
+        uses: redhat-actions/push-to-registry@v3
+        with:
+          tags: ${{ env.IMAGE_NAME }}:latest ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
